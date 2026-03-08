@@ -19,11 +19,11 @@ CREATE TABLE IF NOT EXISTS payment (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_payment_user_id ON payment(user_id);
-CREATE INDEX idx_payment_account_id ON payment(account_id);
-CREATE INDEX idx_payment_status ON payment(status);
-CREATE INDEX idx_payment_created_at ON payment(created_at);
-CREATE INDEX idx_payment_idempotency_key ON payment(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_payment_user_id ON payment(user_id);
+CREATE INDEX IF NOT EXISTS idx_payment_account_id ON payment(account_id);
+CREATE INDEX IF NOT EXISTS idx_payment_status ON payment(status);
+CREATE INDEX IF NOT EXISTS idx_payment_created_at ON payment(created_at);
+CREATE INDEX IF NOT EXISTS idx_payment_idempotency_key ON payment(idempotency_key);
 
 -- Payment Transaction table
 CREATE TABLE IF NOT EXISTS payment_transaction (
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS payment_transaction (
     completed_at TIMESTAMP
 );
 
-CREATE INDEX idx_payment_txn_payment_id ON payment_transaction(payment_id);
-CREATE INDEX idx_payment_txn_bank_txn_id ON payment_transaction(bank_transaction_id);
-CREATE INDEX idx_payment_txn_created_at ON payment_transaction(created_at);
-CREATE INDEX idx_payment_txn_status_date ON payment_transaction(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_payment_txn_payment_id ON payment_transaction(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payment_txn_bank_txn_id ON payment_transaction(bank_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_payment_txn_created_at ON payment_transaction(created_at);
+CREATE INDEX IF NOT EXISTS idx_payment_txn_status_date ON payment_transaction(status, created_at);

@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_user_username ON users(username);
-CREATE INDEX idx_user_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_user_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_user_email ON users(email);
 
 -- Account table
 CREATE TABLE IF NOT EXISTS account (
@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS account (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_account_user_id ON account(user_id);
-CREATE INDEX idx_account_account_number ON account(account_number);
-CREATE INDEX idx_account_status ON account(status);
+CREATE INDEX IF NOT EXISTS idx_account_user_id ON account(user_id);
+CREATE INDEX IF NOT EXISTS idx_account_account_number ON account(account_number);
+CREATE INDEX IF NOT EXISTS idx_account_status ON account(status);
 
 -- Transaction table
 CREATE TABLE IF NOT EXISTS transaction (
@@ -49,11 +49,11 @@ CREATE TABLE IF NOT EXISTS transaction (
     completed_at TIMESTAMP
 );
 
-CREATE INDEX idx_transaction_account_id ON transaction(account_id);
-CREATE INDEX idx_transaction_created_at ON transaction(created_at);
-CREATE INDEX idx_transaction_reference ON transaction(reference_type, reference_id);
-CREATE INDEX idx_transaction_account_date ON transaction(account_id, created_at DESC);
-CREATE INDEX idx_transaction_idempotency_key ON transaction(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_transaction_account_id ON transaction(account_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_created_at ON transaction(created_at);
+CREATE INDEX IF NOT EXISTS idx_transaction_reference ON transaction(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_transaction_account_date ON transaction(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transaction_idempotency_key ON transaction(idempotency_key);
 
 -- Ledger table
 CREATE TABLE IF NOT EXISTS ledger (
@@ -71,10 +71,10 @@ CREATE TABLE IF NOT EXISTS ledger (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_ledger_account_id ON ledger(account_id);
-CREATE INDEX idx_ledger_created_at ON ledger(created_at);
-CREATE INDEX idx_ledger_reference ON ledger(reference_type, reference_id);
-CREATE INDEX idx_ledger_account_date ON ledger(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_account_id ON ledger(account_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_created_at ON ledger(created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_reference ON ledger(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_account_date ON ledger(account_id, created_at DESC);
 
 -- Sample data
 INSERT INTO users (username, email, phone, status) VALUES
