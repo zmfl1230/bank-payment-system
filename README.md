@@ -120,7 +120,31 @@ curl http://localhost:8080/api/accounts/1/balance
 ./gradlew :bank-service:test
 ```
 
-**테스트 통계**: 13개 테스트 (모두 통과)
+**유닛 테스트**: 13개 (모두 통과)
+- AccountTest: 도메인 엔티티 검증
+- AccountServiceTest: 계좌 관리 로직
+- TransactionServiceTest: 입출금 트랜잭션 처리
+
+**통합 테스트**: 4개 (모두 통과)
+- E2E 시나리오: 계좌 생성 → 입금 → 출금 → 잔액 조회
+- 멱등성 검증: 동일 Idempotency-Key 재요청
+- 잔액 부족 시 출금 실패
+- 트랜잭션 이력 조회
+
+### Payment Service 테스트
+```bash
+./gradlew :payment-service:test
+```
+
+**통합 테스트**: 6개 (모두 통과)
+- E2E 시나리오: 결제 승인 → 부분 취소 → 부분 취소
+- 전체 취소 플로우
+- 결제 승인 멱등성 검증
+- 취소 한도 초과 검증
+- Bank Service 실패 처리
+- 존재하지 않는 결제 조회 에러 처리
+
+**총 테스트**: 23개 (모두 통과)
 
 ## 📊 모니터링
 
@@ -182,8 +206,12 @@ docker-compose up -d prometheus grafana
 - ✅ Architecture 설계 문서
 - ✅ TDD 계획 수립
 - ✅ Bank Service 완성 (Domain/Service/API/Tests)
-- ✅ Payment Service 완성 (Domain/Service/API)
+- ✅ Payment Service 완성 (Domain/Service/API/Tests)
 - ✅ Database Schema SQL
+- ✅ 통합 테스트 (Bank 4개, Payment 6개 - 모두 통과)
+- ⏳ 동시성 테스트
+- ⏳ 성능 테스트
+- ⏳ 모니터링 대시보드 구성
 
 ## 📝 License
 
