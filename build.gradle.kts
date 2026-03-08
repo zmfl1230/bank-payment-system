@@ -44,6 +44,10 @@ subprojects {
         }
     }
 
+    tasks.withType<JavaCompile> {
+        options.release.set(17)
+    }
+
     tasks.withType<Test> {
         useJUnitPlatform()
     }
