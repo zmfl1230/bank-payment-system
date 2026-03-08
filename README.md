@@ -56,7 +56,17 @@ docker-compose up -d postgres-bank postgres-payment
 ./gradlew :payment-service:bootRun
 ```
 
-### 4. 샘플 시나리오 테스트
+### 4. 자동 E2E 테스트 (가장 간단!)
+
+```bash
+./test-simple.sh
+```
+
+위 스크립트는 계좌 생성 → 입금 → 결제 → 부분 취소 → 추가 부분 취소까지 자동으로 테스트합니다.
+
+**더 많은 테스트 방법은 [TESTING.md](TESTING.md)를 참고하세요!**
+
+### 5. 수동 테스트 예시
 
 #### 4.1 사용자 계좌 생성
 ```bash

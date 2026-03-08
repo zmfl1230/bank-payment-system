@@ -1,0 +1,150 @@
+### Bank & Payment System API Tests
+### Use with IntelliJ IDEA HTTP Client or REST Client extension in VSCode
+
+### Variables
+@bankHost = http://localhost:8080
+@paymentHost = http://localhost:8081
+
+################################################################################
+### BANK SERVICE TESTS
+################################################################################
+
+### 1. Create Account for User 1
+POST {{bankHost}}/api/accounts
+Content-Type: application/json
+
+{
+  "userId": 1,
+  "accountType": "CHECKING"
+}
+
+> {%
+    client.global.set("accountId", response.body.id);
+    client.log("Account created with ID: " + response.body.id);
+%}
+
+### 2. Deposit 100,000 KRW
+POST {{bankHost}}/api/accounts/{{accountId}}/deposit
+Content-Type: application/json
+Idempotency-Key: deposit-{{$timestamp}}
+
+{
+  "amount": 100000,
+  "description": "Initial deposit"
+}
+
+### 3. Check Balance (should be 100,000)
+GET {{bankHost}}/api/accounts/{{accountId}}/balance
+
+### 4. Get Transaction History
+GET {{bankHost}}/api/accounts/{{accountId}}/transactions?page=0&size=10
+
+################################################################################
+### PAYMENT SERVICE TESTS
+################################################################################
+
+### 5. Payment Approval - 30,000 KRW
+POST {{paymentHost}}/api/payments
+Content-Type: application/json
+Idempotency-Key: payment-{{$timestamp}}
+
+{
+  "userId": "user-001",
+  "accountId": {{accountId}},
+  "amount": 30000,
+  "merchantId": "MERCHANT-001",
+  "orderId": "ORDER-{{$timestamp}}",
+  "description": "Product purchase"
+}
+
+> {%
+    client.global.set("paymentId", response.body.paymentId);
+    client.log("Payment created with ID: " + response.body.paymentId);
+%}
+
+### 6. Check Balance After Payment (should be 70,000)
+GET {{bankHost}}/api/accounts/{{accountId}}/balance
+
+### 7. Get Payment Details
+GET {{paymentHost}}/api/payments/{{paymentId}}
+
+### 8. Partial Cancel - 10,000 KRW
+POST {{paymentHost}}/api/payments/{{paymentId}}/cancel
+Content-Type: application/json
+Idempotency-Key: cancel-{{$timestamp}}
+
+{
+  "amount": 10000,
+  "reason": "Customer request - partial refund"
+}
+
+### 9. Check Balance After Cancel (should be 80,000)
+GET {{bankHost}}/api/accounts/{{accountId}}/balance
+
+### 10. Another Partial Cancel - 5,000 KRW
+POST {{paymentHost}}/api/payments/{{paymentId}}/cancel
+Content-Type: application/json
+Idempotency-Key: cancel-2-{{$timestamp}}
+
+{
+  "amount": 5000,
+  "reason": "Additional refund"
+}
+
+### 11. Final Balance Check (should be 85,000)
+GET {{bankHost}}/api/accounts/{{accountId}}/balance
+
+### 12. Final Payment Status
+GET {{paymentHost}}/api/payments/{{paymentId}}
+
+################################################################################
+### ERROR SCENARIOS
+################################################################################
+
+### Test: Insufficient Balance - Try to withdraw 200,000 KRW
+POST {{bankHost}}/api/accounts/{{accountId}}/withdraw
+Content-Type: application/json
+Idempotency-Key: withdraw-fail-{{$timestamp}}
+
+{
+  "amount": 200000,
+  "description": "Should fail - insufficient balance"
+}
+
+### Test: Cancel More Than Approved Amount
+POST {{paymentHost}}/api/payments/{{paymentId}}/cancel
+Content-Type: application/json
+Idempotency-Key: cancel-fail-{{$timestamp}}
+
+{
+  "amount": 50000,
+  "reason": "Should fail - exceeds approved amount"
+}
+
+### Test: Missing Idempotency Key
+POST {{bankHost}}/api/accounts/{{accountId}}/deposit
+Content-Type: application/json
+
+{
+  "amount": 1000,
+  "description": "Should fail - no idempotency key"
+}
+
+### Test: Non-existent Payment
+GET {{paymentHost}}/api/payments/NON-EXISTENT-ID
+
+################################################################################
+### MONITORING
+################################################################################
+
+### Health Check - Bank Service
+GET {{bankHost}}/actuator/health
+
+### Health Check - Payment Service
+GET {{paymentHost}}/actuator/health
+
+### Prometheus Metrics - Bank Service
+GET {{bankHost}}/actuator/prometheus
+
+### Prometheus Metrics - Payment Service
+GET {{paymentHost}}/actuator/prometheus
