@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  postgres-bank:
+    image: postgres:16-alpine
+    container_name: bank-db
+    environment:
+      POSTGRES_DB: bankdb
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bank123
+    ports:
+      - "5432:5432"
+    volumes:
+      - bank-data:/var/lib/postgresql/data
+    networks:
+      - bank-payment-network
+
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: payment-db
+    environment:
+      POSTGRES_DB: paymentdb
+      POSTGRES_USER: payment
+      POSTGRES_PASSWORD: payment123
+    ports:
+      - "5433:5432"
+    volumes:
+      - payment-data:/var/lib/postgresql/data
+    networks:
+      - bank-payment-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - bank-payment-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - bank-payment-network
+    depends_on:
+      - prometheus
+
+volumes:
+  bank-data:
+  payment-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  bank-payment-network:
+    driver: bridge
