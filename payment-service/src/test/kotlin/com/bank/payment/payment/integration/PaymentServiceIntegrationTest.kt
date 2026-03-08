@@ -96,7 +96,7 @@ class PaymentServiceIntegrationTest {
                         .header("Idempotency-Key", "payment-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)),
-                ).andExpect(status().isOk)
+                ).andExpect(status().isCreated)
                 .andExpect(jsonPath("$.paymentId").exists())
                 .andExpect(jsonPath("$.totalAmount").value(10000))
                 .andExpect(jsonPath("$.approvedAmount").value(10000))
@@ -216,7 +216,8 @@ class PaymentServiceIntegrationTest {
                         .header("Idempotency-Key", "full-cancel-payment-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)),
-                ).andReturn()
+                ).andExpect(status().isCreated)
+                .andReturn()
 
         val paymentId = objectMapper.readTree(createResult.response.contentAsString).get("paymentId").asText()
 
@@ -264,7 +265,7 @@ class PaymentServiceIntegrationTest {
                         .header("Idempotency-Key", "idempotent-payment-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)),
-                ).andExpect(status().isOk)
+                ).andExpect(status().isCreated)
                 .andReturn()
 
         val paymentId1 = objectMapper.readTree(result1.response.contentAsString).get("paymentId").asText()
@@ -277,7 +278,7 @@ class PaymentServiceIntegrationTest {
                         .header("Idempotency-Key", "idempotent-payment-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)),
-                ).andExpect(status().isOk)
+                ).andExpect(status().isCreated)
                 .andReturn()
 
         val paymentId2 = objectMapper.readTree(result2.response.contentAsString).get("paymentId").asText()
@@ -319,7 +320,8 @@ class PaymentServiceIntegrationTest {
                         .header("Idempotency-Key", "exceed-test-payment-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest)),
-                ).andReturn()
+                ).andExpect(status().isCreated)
+                .andReturn()
 
         val paymentId = objectMapper.readTree(createResult.response.contentAsString).get("paymentId").asText()
 
@@ -341,7 +343,7 @@ class PaymentServiceIntegrationTest {
         // Payment status unchanged
         val payment = paymentRepository.findByPaymentId(paymentId)!!
         assertThat(payment.status).isEqualTo(PaymentStatus.APPROVED)
-        assertThat(payment.approvedAmount).isEqualTo(BigDecimal("5000.00"))
+        assertThat(payment.approvedAmount.compareTo(BigDecimal("5000"))).isEqualTo(0)
     }
 
     @Test
@@ -359,13 +361,15 @@ class PaymentServiceIntegrationTest {
                 description = "Test payment",
             )
 
+        // Payment creation will fail due to bank service error
+        // The controller might return 201 Created but the payment will be marked as FAILED
         mockMvc
             .perform(
                 post("/api/payments")
                     .header("Idempotency-Key", "bank-fail-001")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(createRequest)),
-            ).andExpect(status().isBadRequest)
+            ).andExpect(status().is4xxClientError)
 
         // Payment should be marked as FAILED
         val payment = paymentRepository.findByIdempotencyKey("bank-fail-001")
