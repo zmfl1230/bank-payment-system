@@ -8,8 +8,10 @@ import java.math.BigDecimal
 @Component
 class BankServiceClient(
     @Value("\${bank.service.url}") private val bankServiceUrl: String,
+    restClientBuilder: RestClient.Builder,
 ) {
-    private val restClient = RestClient.builder().baseUrl(bankServiceUrl).build()
+    // 테스트 가능하도록 RestClient.Builder 주입 (의존성 역전)
+    private val restClient = restClientBuilder.baseUrl(bankServiceUrl).build()
 
     fun withdraw(
         accountId: Long,
@@ -32,7 +34,8 @@ class BankServiceClient(
             .header("Idempotency-Key", idempotencyKey)
             .body(request)
             .retrieve()
-            .body(BankTransactionResponse::class.java)!!
+            .body(BankTransactionResponse::class.java)
+            ?: throw IllegalStateException("Bank service returned null response for withdraw")
     }
 
     fun deposit(
@@ -54,7 +57,8 @@ class BankServiceClient(
             .header("Idempotency-Key", idempotencyKey)
             .body(request)
             .retrieve()
-            .body(BankTransactionResponse::class.java)!!
+            .body(BankTransactionResponse::class.java)
+            ?: throw IllegalStateException("Bank service returned null response for deposit")
     }
 }
 

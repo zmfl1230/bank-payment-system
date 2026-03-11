@@ -81,7 +81,6 @@ class PaymentService(
      * @throws IllegalArgumentException amount가 음수/0인 경우
      * @throws IllegalStateException Bank Service 호출 실패 시
      */
-    @Transactional
     fun approvePayment(
         userId: String,
         accountId: Long,
@@ -103,14 +102,49 @@ class PaymentService(
         // Validate amount
         require(amount > BigDecimal.ZERO) { "Amount must be positive" }
 
-        // Create payment (Saga Step 1: Payment 생성 - PENDING)
+        // Saga Step 1: Payment 생성 (트랜잭션 분리 - DB 커넥션 빠른 반환)
+        val (payment, transaction) = createPendingPayment(
+            userId, accountId, amount, idempotencyKey, merchantId, orderId, description
+        )
+
+        // Saga Step 2: Bank Service 호출 (트랜잭션 밖 - HTTP 타임아웃이 DB 커넥션에 영향 없음)
+        try {
+            val bankResponse =
+                bankServiceClient.withdraw(
+                    accountId = accountId,
+                    amount = amount,
+                    idempotencyKey = "$idempotencyKey-bank", // Bank Service용 별도 키
+                    referenceType = "PAYMENT", // Reference tracking
+                    referenceId = payment.paymentId, // Payment와 Bank Transaction 연결
+                )
+
+            // Saga Step 3: 성공 시 상태 업데이트 (새 트랜잭션 - 짧고 빠르게)
+            return completePaymentApproval(payment.paymentId, transaction.transactionId, bankResponse.transactionId)
+        } catch (e: Exception) {
+            // Saga 보상: Bank 호출 실패 시 Payment를 FAILED로 마킹
+            // (고객에게 청구하지 않음)
+            failPaymentApproval(payment.paymentId, transaction.transactionId)
+            throw IllegalStateException("Payment approval failed: ${e.message}", e)
+        }
+    }
+
+    @Transactional
+    private fun createPendingPayment(
+        userId: String,
+        accountId: Long,
+        amount: BigDecimal,
+        idempotencyKey: String,
+        merchantId: String?,
+        orderId: String?,
+        description: String?,
+    ): Pair<Payment, PaymentTransaction> {
         val payment =
             Payment(
                 paymentId = generatePaymentId(),
                 userId = userId,
                 accountId = accountId,
-                totalAmount = amount, // 최초 승인 금액 (불변)
-                approvedAmount = amount, // 현재 유효 금액 (취소 시 감소)
+                totalAmount = amount,
+                approvedAmount = amount,
                 cancelledAmount = BigDecimal.ZERO,
                 status = PaymentStatus.PENDING,
                 merchantId = merchantId,
@@ -120,7 +154,6 @@ class PaymentService(
             )
         paymentRepository.save(payment)
 
-        // Create approval transaction (PaymentTransaction 생성 - PENDING)
         val transaction =
             PaymentTransaction(
                 payment = payment,
@@ -132,41 +165,47 @@ class PaymentService(
             )
         paymentTransactionRepository.save(transaction)
 
-        // Saga Step 2: Bank Service 호출 (실제 출금)
-        try {
-            val bankResponse =
-                bankServiceClient.withdraw(
-                    accountId = accountId,
-                    amount = amount,
-                    idempotencyKey = "$idempotencyKey-bank", // Bank Service용 별도 키
-                    referenceType = "PAYMENT", // Reference tracking
-                    referenceId = payment.paymentId, // Payment와 Bank Transaction 연결
-                )
+        return payment to transaction
+    }
 
-            // Saga Step 3: 성공 시 상태 업데이트
-            // Update transaction with bank transaction ID (정산용 참조)
-            transaction.bankTransactionId = bankResponse.transactionId
-            transaction.status = PaymentTransactionStatus.COMPLETED
-            transaction.completedAt = LocalDateTime.now()
-            paymentTransactionRepository.save(transaction)
+    @Transactional
+    private fun completePaymentApproval(
+        paymentId: String,
+        transactionId: String,
+        bankTransactionId: String,
+    ): Payment {
+        val payment = paymentRepository.findByPaymentId(paymentId)
+            ?: throw IllegalStateException("Payment not found: $paymentId")
+        val transaction = paymentTransactionRepository.findByTransactionId(transactionId)
+            ?: throw IllegalStateException("Transaction not found: $transactionId")
 
-            // Update payment status (승인 완료)
-            payment.status = PaymentStatus.APPROVED
-            payment.updatedAt = LocalDateTime.now()
-            paymentRepository.save(payment)
+        transaction.bankTransactionId = bankTransactionId
+        transaction.status = PaymentTransactionStatus.COMPLETED
+        transaction.completedAt = LocalDateTime.now()
+        paymentTransactionRepository.save(transaction)
 
-            return payment
-        } catch (e: Exception) {
-            // Saga 보상: Bank 호출 실패 시 Payment를 FAILED로 마킹
-            // (고객에게 청구하지 않음)
-            transaction.status = PaymentTransactionStatus.FAILED
-            paymentTransactionRepository.save(transaction)
+        payment.status = PaymentStatus.APPROVED
+        payment.updatedAt = LocalDateTime.now()
+        paymentRepository.save(payment)
 
-            payment.status = PaymentStatus.FAILED
-            paymentRepository.save(payment)
+        return payment
+    }
 
-            throw IllegalStateException("Payment approval failed: ${e.message}", e)
-        }
+    @Transactional
+    private fun failPaymentApproval(
+        paymentId: String,
+        transactionId: String,
+    ) {
+        val payment = paymentRepository.findByPaymentId(paymentId)
+            ?: throw IllegalStateException("Payment not found: $paymentId")
+        val transaction = paymentTransactionRepository.findByTransactionId(transactionId)
+            ?: throw IllegalStateException("Transaction not found: $transactionId")
+
+        transaction.status = PaymentTransactionStatus.FAILED
+        paymentTransactionRepository.save(transaction)
+
+        payment.status = PaymentStatus.FAILED
+        paymentRepository.save(payment)
     }
 
     /**
@@ -251,7 +290,6 @@ class PaymentService(
      * @throws IllegalStateException payment 상태가 취소 불가능하거나 취소 금액이 초과한 경우
      * @throws org.springframework.orm.ObjectOptimisticLockingFailureException 동시 취소 충돌 시
      */
-    @Transactional
     fun cancelPayment(
         paymentId: String,
         amount: BigDecimal?,
@@ -264,6 +302,37 @@ class PaymentService(
             return existingTransaction.payment
         }
 
+        // Saga Step 1: 취소 검증 및 PaymentTransaction 생성 (트랜잭션 분리)
+        val (payment, transaction, cancelAmount) = createPendingCancellation(paymentId, amount, idempotencyKey, reason)
+
+        // Saga Step 2: Bank Service 호출 (트랜잭션 밖 - HTTP 타임아웃이 DB 커넥션에 영향 없음)
+        try {
+            val bankResponse =
+                bankServiceClient.deposit(
+                    accountId = payment.accountId,
+                    amount = cancelAmount,
+                    idempotencyKey = "$idempotencyKey-bank", // Bank Service용 별도 키
+                    referenceType = "PAYMENT_CANCEL", // Reference tracking
+                    referenceId = payment.paymentId,
+                )
+
+            // Saga Step 3: 성공 시 상태 업데이트 (새 트랜잭션 - 짧고 빠르게)
+            return completePaymentCancellation(payment.paymentId, transaction.transactionId, cancelAmount, bankResponse.transactionId)
+        } catch (e: Exception) {
+            // Saga 보상: Bank 호출 실패 시 PaymentTransaction만 FAILED
+            // (Payment 상태는 유지 → 클라이언트 재시도 가능)
+            failPaymentCancellation(transaction.transactionId)
+            throw IllegalStateException("Payment cancellation failed: ${e.message}", e)
+        }
+    }
+
+    @Transactional
+    private fun createPendingCancellation(
+        paymentId: String,
+        amount: BigDecimal?,
+        idempotencyKey: String,
+        reason: String?,
+    ): Triple<Payment, PaymentTransaction, BigDecimal> {
         // Lock payment (Optimistic Lock - @Version 필드 사용)
         val payment =
             paymentRepository.findByPaymentId(paymentId)
@@ -290,55 +359,62 @@ class PaymentService(
                 amount = cancelAmount,
                 status = PaymentTransactionStatus.PENDING,
                 idempotencyKey = idempotencyKey,
-                reason = reason, // 취소 사유 저장 (CS/정산용)
+                reason = reason,
             )
         paymentTransactionRepository.save(transaction)
 
-        // Saga Step: Bank Service 호출 (입금/환불)
-        try {
-            val bankResponse =
-                bankServiceClient.deposit(
-                    accountId = payment.accountId,
-                    amount = cancelAmount,
-                    idempotencyKey = "$idempotencyKey-bank", // Bank Service용 별도 키
-                    referenceType = "PAYMENT_CANCEL", // Reference tracking
-                    referenceId = payment.paymentId,
-                )
+        return Triple(payment, transaction, cancelAmount)
+    }
 
-            // Update transaction (정산용 참조 저장)
-            transaction.bankTransactionId = bankResponse.transactionId
-            transaction.status = PaymentTransactionStatus.COMPLETED
-            transaction.completedAt = LocalDateTime.now()
-            paymentTransactionRepository.save(transaction)
+    @Transactional
+    private fun completePaymentCancellation(
+        paymentId: String,
+        transactionId: String,
+        cancelAmount: BigDecimal,
+        bankTransactionId: String,
+    ): Payment {
+        val payment = paymentRepository.findByPaymentId(paymentId)
+            ?: throw IllegalStateException("Payment not found: $paymentId")
+        val transaction = paymentTransactionRepository.findByTransactionId(transactionId)
+            ?: throw IllegalStateException("Transaction not found: $transactionId")
 
-            // Update payment (부분/전액 취소 상태 업데이트)
-            payment.approvedAmount = payment.approvedAmount - cancelAmount
-            payment.cancelledAmount = payment.cancelledAmount + cancelAmount
-            payment.status =
-                if (payment.approvedAmount == BigDecimal.ZERO) {
-                    PaymentStatus.FULLY_CANCELLED // 전액 취소
-                } else {
-                    PaymentStatus.PARTIALLY_CANCELLED // 부분 취소
-                }
-            payment.updatedAt = LocalDateTime.now()
-            // save 시 @Version 체크 → 동시 취소 충돌 감지
-            paymentRepository.save(payment)
+        transaction.bankTransactionId = bankTransactionId
+        transaction.status = PaymentTransactionStatus.COMPLETED
+        transaction.completedAt = LocalDateTime.now()
+        paymentTransactionRepository.save(transaction)
 
-            return payment
-        } catch (e: Exception) {
-            // Saga 보상: Bank 호출 실패 시 PaymentTransaction만 FAILED
-            // (Payment 상태는 유지 → 클라이언트 재시도 가능)
-            transaction.status = PaymentTransactionStatus.FAILED
-            paymentTransactionRepository.save(transaction)
+        payment.approvedAmount = payment.approvedAmount - cancelAmount
+        payment.cancelledAmount = payment.cancelledAmount + cancelAmount
+        payment.status =
+            if (payment.approvedAmount == BigDecimal.ZERO) {
+                PaymentStatus.FULLY_CANCELLED
+            } else {
+                PaymentStatus.PARTIALLY_CANCELLED
+            }
+        payment.updatedAt = LocalDateTime.now()
+        paymentRepository.save(payment)
 
-            throw IllegalStateException("Payment cancellation failed: ${e.message}", e)
-        }
+        return payment
+    }
+
+    @Transactional
+    private fun failPaymentCancellation(transactionId: String) {
+        val transaction = paymentTransactionRepository.findByTransactionId(transactionId)
+            ?: throw IllegalStateException("Transaction not found: $transactionId")
+
+        transaction.status = PaymentTransactionStatus.FAILED
+        paymentTransactionRepository.save(transaction)
     }
 
     @Transactional(readOnly = true)
     fun getPayment(paymentId: String): Payment {
-        return paymentRepository.findByPaymentId(paymentId)
+        val payment = paymentRepository.findByPaymentId(paymentId)
             ?: throw IllegalArgumentException("Payment not found: $paymentId")
+
+        // Lazy loading 방지: 트랜잭션 내에서 transactions 컬렉션 초기화
+        payment.transactions.size
+
+        return payment
     }
 
     private fun generatePaymentId(): String = "PAY-${UUID.randomUUID().toString().substring(0, 8).uppercase()}"
